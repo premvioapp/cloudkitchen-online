@@ -141,6 +141,31 @@ async function fillPhotos(root = document) {
     if (data) { photoMem[id + v] = data; img.src = data; } else img.remove();
   }
 }
+// Example photos (free Unsplash photos) shown on the customer sites until the admin uploads a real photo.
+const STOCK_URL = (id, w = 640) => `https://images.unsplash.com/photo-${id}?w=${w}&h=${w}&q=72&auto=format&fit=crop`;
+const STOCK = [
+  [/jhol|soup|thukpa/i, ['1647999019630-dabe1a837693']],
+  [/momo|dumpling|dim ?sum/i, ['1534422298391-e4f8c172dddb', '1694923450868-b432a8ee52aa', '1783699373851-7dc900256c25', '1647999019630-dabe1a837693']],
+  [/chow ?m[ei]i?n|noodle|chowmin/i, ['1585032226651-759b368d7246', '1634864572865-1cf8ff8bd23d']],
+  [/fries|french fry|chips/i, ['1630384060421-cb20d0e0649d', '1541592106381-b31e9677c0e5']],
+  [/cold coffee|iced? coffee|frappe|cold brew/i, ['1461023058943-07fcbe16d735', '1517701550927-30cf4ba1dba5']],
+  [/coffee|latte|cappuccino|espresso|americano/i, ['1611312410928-bdcb480e6239']],
+  [/\btea\b|chiya|chai/i, ['1619581073186-5b4ae1b0caad', '1561336526-2914f13ceb36']],
+  [/lime|lemon|soda|mojito/i, ['1507281549113-040fcfef650e', '1523677011781-c91d1bbe2f9e']],
+  [/lassi|smoothie|mango|shake/i, ['1623065422902-30a2d299bbe4']],
+  [/rice|thali|dal|bhat|khana/i, ['1588644525273-f37b60d78512']],
+];
+function stockPhoto(it, w) {
+  const t = `${it.name || ''} ${it.category || ''}`;
+  const m = STOCK.find(([re]) => re.test(it.name || '')) || STOCK.find(([re]) => re.test(t));
+  if (!m) return '';
+  const ids = m[1]; let h = 0; for (const ch of String(it.name || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return STOCK_URL(ids[h % ids.length], w);
+}
+// Real uploaded photo if there is one, otherwise an example photo (or nothing)
+const dishImg = (it, cls = '', w) => (it.photo || it.image) ? photoImg(it, cls)
+  : (stockPhoto(it, w) ? `<img class="${cls}" src="${stockPhoto(it, w)}" alt="" loading="lazy" onerror="this.remove()">` : '');
+
 // Turn a picked photo into a small square JPEG (about 20–40 KB)
 async function compressPhoto(file) {
   const url = URL.createObjectURL(file);
