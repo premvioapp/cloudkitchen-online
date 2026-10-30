@@ -246,6 +246,25 @@
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:28px 22px}
   @media (max-width:560px){ .grid{grid-template-columns:1fr 1fr;gap:22px 14px} }
   .dish{display:flex;flex-direction:column}
+  /* each category is one sideways row */
+  .sechead{display:flex;align-items:baseline;gap:12px;margin-bottom:16px}
+  .sechead h2{margin:0}
+  .sechead .cnt{color:var(--steam);font-weight:600;font-size:14px}
+  .arrows{display:flex;gap:8px}
+  .arr{width:42px;height:42px;border-radius:50%;border:1px solid var(--line);background:#fff;color:var(--sky);display:grid;place-items:center;box-shadow:0 6px 16px -10px rgba(0,0,0,.4)}
+  .arr:hover:not(:disabled){border-color:var(--sky)}
+  .arr:disabled{opacity:.35;cursor:default;box-shadow:none}
+  .arr[data-dir="-1"] .ic{transform:rotate(180deg)}
+  .noscroll .arrows{visibility:hidden}
+  .hrow{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(200px,228px);gap:20px;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;scroll-padding-left:2px;padding:4px 2px 18px;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 48px),transparent);cursor:grab}
+  .hrow::-webkit-scrollbar{display:none}
+  .hrow > .dish{scroll-snap-align:start}
+  .hrow.dragging{cursor:grabbing;scroll-snap-type:none;user-select:none}
+  .hrow.dragging img{pointer-events:none}
+  .hrow:focus-visible{outline-offset:4px}
+  .noscroll .hrow{-webkit-mask-image:none;mask-image:none;cursor:default}
+  .hrow.at-end{-webkit-mask-image:none;mask-image:none}
+  @media (max-width:700px){ .arrows{display:none} .hrow{grid-auto-columns:44vw;gap:14px} }
   .ph{position:relative;aspect-ratio:1/1;border-radius:22px;overflow:hidden;background:var(--mist)}
   .ph img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .4s ease}
   .dish:hover .ph img{transform:scale(1.05)}
@@ -450,7 +469,7 @@ async function init() {
   db.ref('menu').on('value', snap => {
     menuLoaded = true;
     items = listOf(snap.val()).filter(i => i.available).map(i => ({ ...i, price: Number(i.price) || 0 }))
-      .sort((a, b) => String(a.category).localeCompare(b.category) || String(a.name).localeCompare(b.name));
+      .sort((a, b) => String(a.category).localeCompare(b.category) || (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || String(a.name).localeCompare(b.name));
     let changed = false;
     for (const id in cart) if (!items.find(i => i.id === id)) { delete cart[id]; changed = true; }
     if (changed) save(CART_KEY, cart);
@@ -656,7 +675,7 @@ const dishHtml = it => `
     ${it.description ? `<p class="ds">${esc(it.description)}</p>` : ''}
     <div class="row"><span class="price">${money(it.price)}</span>${qtyControl(it)}</div>
   </article>`;
-const skeleton = () => `<section class="section"><div class="sk sk-h"></div><div class="grid">${Array.from({ length: 8 }, () => `
+const skeleton = () => `<section class="section"><div class="sk sk-h"></div><div class="hrow" style="cursor:default">${Array.from({ length: 6 }, () => `
   <div class="dish"><div class="ph sk"></div><div class="sk sk-l"></div><div class="sk sk-s"></div></div>`).join('')}</div></section>`;
 function renderMenu() {
   const box = $('#dishes'); if (!box) return;
@@ -694,10 +713,18 @@ function renderMenu() {
       document.getElementById('cat' + b.dataset.c).scrollIntoView({ behavior: 'smooth' });
       [...$('#cats').children].forEach(x => x.classList.toggle('on', x === b));
     };
-    box.innerHTML = cs.length ? cs.map((c, i) => `
-      <section class="section" id="cat${i}"><h2>${esc(c)}</h2>
-        <div class="grid">${items.filter(it => it.category === c).map(dishHtml).join('')}</div></section>`).join('')
+    box.innerHTML = cs.length ? cs.map((c, i) => {
+      const list = items.filter(it => it.category === c);
+      return `
+      <section class="section" id="cat${i}">
+        <div class="sechead"><h2>${esc(c)}</h2><span class="cnt">${list.length} ${list.length === 1 ? 'dish' : 'dishes'}</span>
+          <span class="spacer"></span>
+          <div class="arrows"><button class="arr" data-row="${i}" data-dir="-1" aria-label="Scroll ${esc(c)} left">${ic('arrow', 18)}</button><button class="arr" data-row="${i}" data-dir="1" aria-label="Scroll ${esc(c)} right">${ic('arrow', 18)}</button></div></div>
+        <div class="hrow" id="row${i}" tabindex="0" aria-label="${esc(c)}, scroll sideways for more">${list.map(dishHtml).join('')}</div>
+      </section>`;
+    }).join('')
       : `<div class="empty">${ic('book', 44)}<p>The menu is being updated. Please check back soon.</p></div>`;
+    setupRows(box);
   }
   fillPhotos(box);
   box.onclick = e => {
@@ -705,6 +732,30 @@ function renderMenu() {
     if (!add && !dec) return;
     changeQty((add || dec).dataset[add ? 'add' : 'dec'], add ? 1 : -1);
   };
+}
+// sideways rows: arrows, mouse drag, and arrow buttons that dim at the ends
+function setupRows(root) {
+  root.querySelectorAll('.hrow').forEach(row => {
+    const sec = row.closest('.section');
+    const upd = () => {
+      const max = row.scrollWidth - row.clientWidth - 2;
+      sec.querySelectorAll('.arr').forEach(b => b.disabled = b.dataset.dir === '-1' ? row.scrollLeft <= 2 : row.scrollLeft >= max);
+      sec.classList.toggle('noscroll', max <= 0);
+      row.classList.toggle('at-end', row.scrollLeft >= max);
+    };
+    row.addEventListener('scroll', upd, { passive: true });
+    setTimeout(upd, 50); window.addEventListener('resize', upd);
+    // drag with the mouse on computers (touch already swipes)
+    let down = false, startX = 0, startL = 0, moved = false;
+    row.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') return; down = true; moved = false; startX = e.clientX; startL = row.scrollLeft; });
+    window.addEventListener('pointermove', e => { if (!down) return; const dx = e.clientX - startX; if (Math.abs(dx) > 6) { moved = true; row.classList.add('dragging'); row.scrollLeft = startL - dx; } });
+    window.addEventListener('pointerup', () => { if (!down) return; down = false; setTimeout(() => row.classList.remove('dragging'), 0); });
+    row.addEventListener('click', e => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+  });
+  root.querySelectorAll('.arr').forEach(b => b.onclick = () => {
+    const row = document.getElementById('row' + b.dataset.row);
+    row.scrollBy({ left: Number(b.dataset.dir) * Math.max(240, row.clientWidth * 0.8), behavior: 'smooth' });
+  });
 }
 function changeQty(id, d) {
   if (d > 0 && !isOpen()) return toast('Online ordering is paused right now.', 'alert');
