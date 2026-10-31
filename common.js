@@ -1,4 +1,4 @@
-window.CK_VERSION = '20261031071527';
+window.CK_VERSION = '20261031091652';
 // Shared helpers for all Cloud Kitchen sites (Firebase Realtime Database version)
 const FB = window.CK_FIREBASE || {};
 const CONFIGURED = !!(FB.apiKey && FB.databaseURL && !/PASTE-/.test(FB.apiKey + FB.appId));
@@ -113,6 +113,16 @@ const normOrder = o => {
   };
 };
 const validOrder = o => o && typeof o.table === 'string' && o.items && o.status;
+
+// ---------- Online order payment: full online, cash, or advance (part paid online now, rest in cash) ----------
+const advanceOf = (total, pct) => Math.min(total, Math.ceil(total * (Number(pct) || 0) / 100 - 1e-9));
+function payInfo(o) {
+  const p = o.payment || {}, pct = Number(p.advancePct) || 0;
+  const restWord = o.orderType === 'pickup' ? 'at pickup' : 'cash on delivery';
+  if (p.method === 'online') return { kind: 'online', now: o.total, rest: 0, ref: p.ref || '', verified: !!p.verified, restWord };
+  if (pct > 0) { const now = advanceOf(o.total, pct); return { kind: 'advance', pct, now, rest: o.total - now, ref: p.ref || '', verified: !!p.verified, restWord }; }
+  return { kind: 'cash', now: 0, rest: o.total, ref: '', verified: false, restWord };
+}
 
 // ---------- Price options (e.g. "6 pcs" Rs. 420 / "10 pcs" Rs. 700) ----------
 // menu/$id/options = { o1: {label, price}, o2: ... }. Cart keys: "id" or "id~o1".
@@ -231,7 +241,9 @@ async function askNotify() {
 }
 async function notify(title, body, tag) {
   if (!notifyOn()) return;
-  const opts = { body: body || '', tag: tag || title, renotify: true, icon: 'icon-192.png', badge: 'icon-192.png', vibrate: [250, 120, 250, 120, 250], requireInteraction: true };
+  // each site gets its own tag: admin and waiter live on the same github.io address, and the same tag
+  // from the same address replaces the other site's pop-up on the phone
+  const opts = { body: body || '', tag: (window.CK_SITE || 'ck') + '-' + (tag || title), renotify: true, icon: 'icon-192.png', badge: 'icon-192.png', vibrate: [250, 120, 250, 120, 250], requireInteraction: true };
   try {
     const r = swReg || (navigator.serviceWorker && await navigator.serviceWorker.getRegistration());
     if (r) { await r.showNotification(title, opts); return; }

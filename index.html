@@ -363,6 +363,7 @@
   .pay .ic{margin-top:2px;color:var(--sky)}
   .pay b{display:block}
   .pay small{color:var(--steam)}
+  .paybox .advlabel{text-align:center;font-weight:700;color:var(--gold);font-size:14px;text-transform:uppercase;letter-spacing:.06em}
   .paybox{background:var(--cloud);border-radius:16px;padding:16px;margin:4px 0 14px}
   .paybox .qr{display:block;width:100%;max-width:240px;margin:0 auto 12px;border-radius:12px;background:#fff}
   .paybox dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0 0 12px}
@@ -457,6 +458,7 @@ const fee = () => form.orderType === 'delivery' ? (Number(shop.deliveryFee) || 0
 const count = () => Object.values(cart).reduce((a, b) => a + b, 0);
 const subtotal = () => cartLines(items, cart).reduce((s, l) => s + l.price * l.n, 0);
 const isOpen = () => shop.enabled === true;
+const advPct = () => shop.cod && Number(shop.advancePct) > 0 ? Math.min(100, Number(shop.advancePct)) : 0; // advance % for cash orders
 const cats = () => [...new Set(items.map(i => i.category))];
 const initial = n => String(n || '?').trim().charAt(0).toUpperCase();
 
@@ -504,7 +506,7 @@ function render() {
     shop.hours && `<li>${ic('clock', 17)}${esc(shop.hours)}</li>`,
     shop.allowDelivery && `<li>${ic('truck', 17)}${Number(shop.deliveryFee) ? 'Delivery ' + money(shop.deliveryFee) : 'Free delivery'}</li>`,
     shop.allowPickup && `<li>${ic('store', 17)}Pickup available</li>`,
-    (shop.cod || shop.payOnline) && `<li>${ic('cash', 17)}${[shop.cod && 'Cash on delivery', shop.payOnline && 'Pay online'].filter(Boolean).join(' or ')}</li>`,
+    (shop.cod || shop.payOnline) && `<li>${ic('cash', 17)}${[shop.cod && (advPct() ? `Cash on delivery (${advPct()}% advance)` : 'Cash on delivery'), shop.payOnline && 'Pay online'].filter(Boolean).join(' or ')}</li>`,
   ].filter(Boolean).join('');
   const puffs = Array.from({ length: 9 }, (_, i) => {
     const size = 160 + (i * 53) % 180, left = (i * 37 + 5) % 100;
@@ -592,7 +594,7 @@ function render() {
           <ol class="steps4">
             <li><div><b>Pick your food</b><span>Tap the plus button on anything you like.</span></div></li>
             <li><div><b>Tell us where</b><span>Your name, phone number, area and address.</span></div></li>
-            <li><div><b>Choose how to pay</b><span>${[shop.cod && 'Cash on delivery', shop.payOnline && `${shop.walletName || 'online'} payment`].filter(Boolean).join(' or ') || 'Cash on delivery'}.</span></div></li>
+            <li><div><b>Choose how to pay</b><span>${[shop.cod && (advPct() ? `${advPct()}% advance online, rest cash on delivery` : 'Cash on delivery'), shop.payOnline && `${shop.walletName || 'online'} payment`].filter(Boolean).join(' or ') || 'Cash on delivery'}.</span></div></li>
             <li><div><b>We cook and bring it</b><span>Follow your order live, from the kitchen to your door.</span></div></li>
           </ol>
           <a class="cta" href="#menu" style="margin-top:26px">${ic('bag', 19)}Start your order</a>
@@ -908,16 +910,22 @@ function renderDrawer() {
   }
 
   if (step === 'pay') {
-    const total = subtotal() + fee();
+    const total = subtotal() + fee(), pct = advPct(), adv = pct ? advanceOf(total, pct) : 0;
+    const restWord = form.orderType === 'pickup' ? 'at pickup' : 'cash on delivery';
+    const showBox = (form.pay === 'online' && shop.payOnline) || (form.pay === 'cod' && adv > 0);
+    const boxAmount = form.pay === 'online' ? total : adv;
     d.innerHTML = head('Checkout', 'details') + `
       <div class="dbody">
         ${stepsBar(2)}
-        ${shop.cod ? `<button class="pay ${form.pay === 'cod' ? 'on' : ''}" data-pay="cod" role="radio" aria-checked="${form.pay === 'cod'}">${ic('cash', 20)}<span><b>${form.orderType === 'pickup' ? 'Pay at pickup' : 'Cash on delivery'}</b><small>Pay ${money(total)} when you get your food</small></span></button>` : ''}
-        ${shop.payOnline ? `<button class="pay ${form.pay === 'online' ? 'on' : ''}" data-pay="online" role="radio" aria-checked="${form.pay === 'online'}">${ic('phone', 20)}<span><b>Pay online now</b><small>${esc(shop.walletName || 'Mobile wallet')}${shop.walletName ? ', scan the QR or send to our number' : ''}</small></span></button>` : ''}
-        ${form.pay === 'online' && shop.payOnline ? `
+        ${shop.cod ? `<button class="pay ${form.pay === 'cod' ? 'on' : ''}" data-pay="cod" role="radio" aria-checked="${form.pay === 'cod'}">${ic('cash', 20)}<span>${adv
+          ? `<b>Pay ${pct}% now, rest ${form.orderType === 'pickup' ? 'at pickup' : 'on delivery'}</b><small>${money(adv)} now online, ${money(total - adv)} ${restWord}</small>`
+          : `<b>${form.orderType === 'pickup' ? 'Pay at pickup' : 'Cash on delivery'}</b><small>Pay ${money(total)} when you get your food</small>`}</span></button>` : ''}
+        ${shop.payOnline ? `<button class="pay ${form.pay === 'online' ? 'on' : ''}" data-pay="online" role="radio" aria-checked="${form.pay === 'online'}">${ic('phone', 20)}<span><b>Pay ${adv ? 'full amount' : ''} online now</b><small>${esc(shop.walletName || 'Mobile wallet')}${shop.walletName ? ', scan the QR or send to our number' : ''}</small></span></button>` : ''}
+        ${showBox ? `
           <div class="paybox">
-            <div class="amount">${money(total)}</div>
-            <p class="muted" style="text-align:center;margin:0 0 12px">Send this amount, then place your order.</p>
+            ${form.pay === 'cod' ? `<div class="advlabel">Advance ${pct}%</div>` : ''}
+            <div class="amount">${money(boxAmount)}</div>
+            <p class="muted" style="text-align:center;margin:0 0 12px">${form.pay === 'cod' ? `Send this advance, then place your order. Pay the rest, ${money(total - adv)}, ${restWord}.` : 'Send this amount, then place your order.'}</p>
             ${shop.payQr ? `<img class="qr" id="payqr" alt="Payment QR code">` : ''}
             <dl>
               ${shop.walletName ? `<dt>Pay with</dt><dd>${esc(shop.walletName)}</dd>` : ''}
@@ -925,7 +933,7 @@ function renderDrawer() {
               ${shop.accountName ? `<dt>Name</dt><dd>${esc(shop.accountName)}</dd>` : ''}
             </dl>
             <div class="field" style="margin:0"><label for="fref">Transaction ID from your payment app</label><input id="fref" maxlength="60" placeholder="So we can match your payment" value="${esc(form.ref || '')}"></div>
-            <label class="check"><input type="checkbox" id="paid" ${form.paid ? 'checked' : ''}>I have sent ${money(total)}</label>
+            <label class="check"><input type="checkbox" id="paid" ${form.paid ? 'checked' : ''}>I have sent ${money(boxAmount)}</label>
           </div>` : ''}
         ${totalsHtml()}
         <div class="err" id="err2"></div>
@@ -979,7 +987,8 @@ function waMessage(o) {
     ...o.items.map(l => `${l.qty} x ${lineName(l)} = ${money(l.price * l.qty)}`),
     o.orderType === 'delivery' ? `Delivery: ${o.deliveryFee ? money(o.deliveryFee) : 'Free'}` : '',
     `Total: ${money(o.total)}`,
-    `Payment: ${o.payment?.method === 'online' ? `Paid online${shop.walletName ? ' (' + shop.walletName + ')' : ''}${o.payment.ref ? ', transaction ID ' + o.payment.ref : ''}` : (o.orderType === 'pickup' ? 'Pay at pickup' : 'Cash on delivery')}`,
+    (() => { const pi = payInfo(o), w = shop.walletName ? ' (' + shop.walletName + ')' : '', id = pi.ref ? ', transaction ID ' + pi.ref : '';
+      return `Payment: ${pi.kind === 'online' ? `Paid online${w}${id}` : pi.kind === 'advance' ? `Advance ${money(pi.now)} paid online${w}${id}. Collect ${money(pi.rest)} ${pi.restWord}` : (o.orderType === 'pickup' ? 'Pay at pickup' : 'Cash on delivery')}`; })(),
     o.note ? `Note: ${o.note}` : '',
   ].filter((x, i, a) => x !== '' || (a[i - 1] && a[i - 1] !== ''));
   return L.join('\n');
@@ -994,7 +1003,7 @@ function sendAlerts(o) {
     if (shop.ntfyTopic) {
       // short message without personal details (ntfy codes are not password protected)
       const where = o.orderType === 'delivery' ? `Delivery to ${o.customer?.area || 'area not set'}` : 'Pickup';
-      const body = `${o.items.map(l => `${l.qty} x ${lineName(l)}`).join(', ')}\n${where}. Total ${money(o.total)}, ${o.payment?.method === 'online' ? 'paid online' : 'cash'}.`;
+      const body = `${o.items.map(l => `${l.qty} x ${lineName(l)}`).join(', ')}\n${where}. Total ${money(o.total)}, ${(pi => pi.kind === 'online' ? 'paid online' : pi.kind === 'advance' ? `advance ${money(pi.now)} paid online, collect ${money(pi.rest)}` : 'cash')(payInfo(o))}.`;
       const q = `title=${encodeURIComponent(`New online order ${o.code}: ${money(o.total)}`)}&priority=high&tags=bell${shop.adminUrl ? '&click=' + encodeURIComponent(shop.adminUrl) : ''}`;
       fetch(`https://ntfy.sh/${encodeURIComponent(shop.ntfyTopic)}?${q}`, { method: 'POST', body, ...ka }).catch(() => {});
     }
@@ -1015,6 +1024,9 @@ async function placeOrder() {
   const err = $('#err2'), btn = $('#place');
   if (!form.pay || (form.pay === 'cod' && !shop.cod) || (form.pay === 'online' && !shop.payOnline)) return err.textContent = 'Please choose how you want to pay.';
   if (form.pay === 'online' && !form.paid) return err.textContent = 'Please send the payment first, then tick the box.';
+  const pct = form.pay === 'cod' ? advPct() : 0;
+  if (pct && (form.ref || '').length < 4) return err.textContent = 'Please send the advance and enter the transaction ID.';
+  if (pct && !form.paid) return err.textContent = 'Please send the advance first, then tick the box.';
   const lines = cartLines(items, cart).map(l => orderLine(l, l.n));
   if (!lines.length) return err.textContent = 'Your order is empty.';
   btn.disabled = true; btn.textContent = 'Sending…'; err.textContent = '';
@@ -1023,7 +1035,7 @@ async function placeOrder() {
     table: 'Online', items: lines, note: (form.note || '').slice(0, 300), status: 'new', source: 'online',
     orderType: form.orderType, deliveryFee: fee(),
     customer: { name: form.name, phone: form.phone, address: form.address || '', ...(form.orderType === 'delivery' ? { area: form.area } : {}) },
-    payment: { method: form.pay, ref: form.pay === 'online' ? (form.ref || '') : '', verified: false },
+    payment: { method: form.pay, ref: form.pay === 'online' || pct ? (form.ref || '') : '', verified: false, ...(pct ? { advancePct: pct } : {}) },
     createdAt: TS(), updatedAt: TS(), createdBy: '', createdByName: '', handledBy: '',
   };
   let lastErr;
@@ -1059,7 +1071,7 @@ function doneHtml(o, tracking) {
       `<div class="track">${st(1, 'Received')}${st(2, 'Preparing')}${st(3, third)}${st(4, o.orderType === 'pickup' ? 'Picked up' : 'Delivered')}</div>`}
     ${shop.phone ? `<a class="linkbtn" style="display:block;text-decoration:none" href="tel:${esc(shop.phone.replace(/[^0-9+]/g, ''))}">${ic('call', 16)} Call ${esc(shop.phone)}</a>` : ''}
     <div class="summary">${o.items.map(l => `${l.qty} x ${esc(lineName(l))}`).join('<br>')}
-      <div style="margin-top:8px;font-weight:700">Total ${money(o.total)}, ${o.payment?.method === 'online' ? (o.payment.verified ? 'payment received' : 'paid online, being checked') : (o.orderType === 'pickup' ? 'pay at pickup' : 'cash on delivery')}</div></div>
+      <div style="margin-top:8px;font-weight:700">Total ${money(o.total)}, ${(pi => pi.kind === 'online' ? (pi.verified ? 'payment received' : 'paid online, being checked') : pi.kind === 'advance' ? `advance ${money(pi.now)} ${pi.verified ? 'received' : 'paid, being checked'}, pay ${money(pi.rest)} ${pi.restWord}` : (o.orderType === 'pickup' ? 'pay at pickup' : 'cash on delivery'))(payInfo(o))}</div></div>
     ${tracking ? '' : `<button class="linkbtn" id="more">Order something else</button>`}
   </div>`;
 }
@@ -1143,7 +1155,7 @@ init().catch(e => { $('#app').innerHTML = `<div class="empty"><h2>The menu could
   if (typeof window.CK_FIREBASE === 'undefined') miss.push('config.js');
   if (typeof firebase === 'undefined') miss.push('firebase-app-compat.js');
   if (typeof CONFIGURED === 'undefined') miss.push('common.js');
-  if (typeof CONFIGURED !== 'undefined' && window.CK_VERSION !== '20261031071527') miss.push('common.js (this one is from an older version, upload the new common.js)');
+  if (typeof CONFIGURED !== 'undefined' && window.CK_VERSION !== '20261031091652') miss.push('common.js (this one is from an older version, upload the new common.js)');
   miss = miss.filter(function (v, i, a) { return a.indexOf(v) === i; });
   if (!miss.length) return;
   var s = document.getElementById('splash');
