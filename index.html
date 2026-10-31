@@ -275,6 +275,13 @@
   .dish .ds{font-size:14px;color:var(--steam);margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .dish .row{display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:8px}
   .price{font-weight:700;font-size:17px}
+  .orows{margin-top:8px}
+  .orow{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--mist);min-height:48px}
+  .orow .ol{flex:1;min-width:0;font-weight:600;font-size:15px;line-height:1.25}
+  .orow .ol b{display:block;font-size:16px}
+  .orow .add{width:36px;height:36px}
+  .orow .stepper button{width:30px;height:30px}
+  .line .nm .sz{display:inline-block;white-space:nowrap;font-weight:600;color:var(--steam)}
   .add{width:42px;height:42px;border-radius:50%;border:0;background:var(--gold);color:#fff;display:grid;place-items:center;flex:none}
   .add:hover{background:var(--gold-hi)}
   .add:disabled{background:var(--mist);color:var(--steam);cursor:not-allowed}
@@ -448,7 +455,7 @@ form = { orderType: 'delivery', pay: 'cod', area: '', ...load(INFO_KEY, {}) };
 
 const fee = () => form.orderType === 'delivery' ? (Number(shop.deliveryFee) || 0) : 0;
 const count = () => Object.values(cart).reduce((a, b) => a + b, 0);
-const subtotal = () => Object.entries(cart).reduce((s, [id, n]) => s + (items.find(i => i.id === id)?.price || 0) * n, 0);
+const subtotal = () => cartLines(items, cart).reduce((s, l) => s + l.price * l.n, 0);
 const isOpen = () => shop.enabled === true;
 const cats = () => [...new Set(items.map(i => i.category))];
 const initial = n => String(n || '?').trim().charAt(0).toUpperCase();
@@ -484,7 +491,7 @@ async function init() {
     items = listOf(snap.val()).filter(i => i.available).map(i => ({ ...i, price: Number(i.price) || 0 }))
       .sort((a, b) => String(a.category).localeCompare(b.category) || (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || String(a.name).localeCompare(b.name));
     let changed = false;
-    for (const id in cart) if (!items.find(i => i.id === id)) { delete cart[id]; changed = true; }
+    for (const k in cart) if (!cartPick(items, k)) { delete cart[k]; changed = true; }
     if (changed) save(CART_KEY, cart);
     renderMenu(); renderCartBits(); refreshCollage();
     if ($('#drawer')?.classList.contains('open') && step === 'cart') renderDrawer();
@@ -676,18 +683,24 @@ function refreshCollage() {
 
 // ---------- menu ----------
 const photoTile = it => dishImg(it, '', 640) || `<div class="ini">${esc(initial(it.name))}</div>`;
-function qtyControl(it) {
-  const n = cart[it.id] || 0;
-  if (!n) return `<button class="add" data-add="${esc(it.id)}" aria-label="Add ${esc(it.name)}" ${isOpen() ? '' : 'disabled'}>${ic('plus', 20)}</button>`;
-  return `<div class="stepper"><button data-dec="${esc(it.id)}" aria-label="One less">${ic('minus', 16)}</button><span>${n}</span><button data-add="${esc(it.id)}" aria-label="One more">${ic('plus', 16)}</button></div>`;
+function qtyControl(key, label) {
+  const n = cart[key] || 0;
+  if (!n) return `<button class="add" data-add="${esc(key)}" aria-label="Add ${esc(label)}" ${isOpen() ? '' : 'disabled'}>${ic('plus', 20)}</button>`;
+  return `<div class="stepper"><button data-dec="${esc(key)}" aria-label="One less">${ic('minus', 16)}</button><span>${n}</span><button data-add="${esc(key)}" aria-label="One more">${ic('plus', 16)}</button></div>`;
 }
-const dishHtml = it => `
+const inOrder = it => Object.entries(cart).reduce((s, [k, n]) => s + (k.split('~')[0] === it.id ? n : 0), 0);
+const dishHtml = it => {
+  const os = optsOf(it), n = inOrder(it);
+  return `
   <article class="dish" data-id="${esc(it.id)}">
-    <div class="ph">${photoTile(it)}${cart[it.id] ? `<span class="qtyon">${cart[it.id]} in order</span>` : ''}</div>
+    <div class="ph">${photoTile(it)}${n ? `<span class="qtyon">${n} in order</span>` : ''}</div>
     <h3>${esc(it.name)}</h3>
     ${it.description ? `<p class="ds">${esc(it.description)}</p>` : ''}
-    <div class="row"><span class="price">${money(it.price)}</span>${qtyControl(it)}</div>
+    ${os.length ? `<div class="orows">${os.map(o => `
+      <div class="orow"><span class="ol">${esc(o.label)}<b>${money(o.price)}</b></span>${qtyControl(cartKey(it.id, o.k), it.name + ' ' + o.label)}</div>`).join('')}</div>`
+      : `<div class="row"><span class="price">${money(it.price)}</span>${qtyControl(it.id, it.name)}</div>`}
   </article>`;
+};
 const skeleton = () => `<section class="section"><div class="sk sk-h"></div><div class="hrow" style="cursor:default">${Array.from({ length: 6 }, () => `
   <div class="dish"><div class="ph sk"></div><div class="sk sk-l"></div><div class="sk sk-s"></div></div>`).join('')}</div></section>`;
 function renderMenu() {
@@ -775,22 +788,23 @@ function changeQty(id, d) {
   cart[id] = Math.max(0, Math.min(50, (cart[id] || 0) + d));
   if (!cart[id]) delete cart[id];
   save(CART_KEY, cart);
-  const card = document.querySelector(`.dish[data-id="${CSS.escape(id)}"]`);
-  if (card) { const it = items.find(i => i.id === id); if (it) { card.outerHTML = dishHtml(it); fillPhotos($('#dishes')); } }
+  const did = id.split('~')[0];
+  document.querySelectorAll(`.dish[data-id="${CSS.escape(did)}"]`).forEach(card => { const it = items.find(i => i.id === did); if (it) card.outerHTML = dishHtml(it); });
+  fillPhotos($('#dishes'));
   renderCartBits();
   if (d > 0) { const b = $('#cartTop'); b.classList.remove('bump'); void b.offsetWidth; b.classList.add('bump'); }
 }
 function renderSide() {
   const el = $('#side'); if (!el) return;
-  const lines = Object.entries(cart).map(([id, n]) => ({ it: items.find(i => i.id === id), n })).filter(l => l.it);
+  const lines = cartLines(items, cart);
   const n = count();
   el.innerHTML = `
     <div class="sh"><h2>Your order</h2>${n ? `<span class="n">${n}</span>` : ''}</div>
-    <div class="sb">${lines.length ? lines.map(({ it, n }) => `
+    <div class="sb">${lines.length ? lines.map(({ it, key, size, price, n }) => `
       <div class="line">
         <div class="th">${dishImg(it, '', 120) || esc(initial(it.name))}</div>
-        <div class="nm"><b>${esc(it.name)}</b><small>${money(it.price * n)}</small></div>
-        <div class="stepper"><button data-dec="${esc(it.id)}" aria-label="One less">${ic('minus', 15)}</button><span>${n}</span><button data-add="${esc(it.id)}" aria-label="One more">${ic('plus', 15)}</button></div>
+        <div class="nm"><b>${esc(it.name)}${size ? ` <span class="sz">${esc(size)}</span>` : ''}</b><small>${money(price * n)}</small></div>
+        <div class="stepper"><button data-dec="${esc(key)}" aria-label="One less">${ic('minus', 15)}</button><span>${n}</span><button data-add="${esc(key)}" aria-label="One more">${ic('plus', 15)}</button></div>
       </div>`).join('') : `<div class="emptyc">${ic('bag', 40)}<p>Your order is empty.<br>Tap + on any dish to add it.</p></div>`}</div>
     ${lines.length ? `<div class="sf">
       <div class="totals" style="margin:0 0 12px"><div class="grand" style="padding-top:0"><span>Food total</span><span>${money(subtotal())}</span></div>
@@ -844,16 +858,16 @@ const totalsHtml = (withFee = true) => `
 function renderDrawer() {
   const d = $('#drawer'); if (!d) return;
   const head = (title, back) => `<div class="dhead">${back ? `<button class="iconbtn" data-go="${back}" aria-label="Back"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>` : ''}<h2>${title}</h2><button class="iconbtn" id="dclose" aria-label="Close">${ic('x', 18)}</button></div>`;
-  const lines = Object.entries(cart).map(([id, n]) => ({ it: items.find(i => i.id === id), n })).filter(l => l.it);
+  const lines = cartLines(items, cart);
 
   if (step === 'cart') {
     d.innerHTML = head('Your order') + (lines.length ? `
       <div class="dbody">
-        ${lines.map(({ it, n }) => `
+        ${lines.map(({ it, key, size, price, n }) => `
           <div class="line">
             <div class="th">${dishImg(it, '', 120) || esc(initial(it.name))}</div>
-            <div class="nm"><b>${esc(it.name)}</b><small>${money(it.price)} each</small></div>
-            <div class="stepper"><button data-dec="${esc(it.id)}" aria-label="One less">${ic('minus', 15)}</button><span>${n}</span><button data-add="${esc(it.id)}" aria-label="One more">${ic('plus', 15)}</button></div>
+            <div class="nm"><b>${esc(it.name)}${size ? ` <span class="sz">${esc(size)}</span>` : ''}</b><small>${money(price)} each</small></div>
+            <div class="stepper"><button data-dec="${esc(key)}" aria-label="One less">${ic('minus', 15)}</button><span>${n}</span><button data-add="${esc(key)}" aria-label="One more">${ic('plus', 15)}</button></div>
           </div>`).join('')}
         ${totalsHtml(false)}
         <p class="muted" style="font-size:14px;margin:4px 0 0">${shop.allowDelivery ? (fee() || form.orderType !== 'delivery' ? `Delivery fee ${Number(shop.deliveryFee) ? money(shop.deliveryFee) : 'is free'}; added at checkout.` : '') : ''}</p>
@@ -962,7 +976,7 @@ function waMessage(o) {
     `Phone: ${o.customer?.phone || ''}`,
     o.orderType === 'delivery' ? `Deliver to: ${o.customer?.area ? o.customer.area + ', ' : ''}${o.customer?.address || ''}` : `Pickup at the cafe (address: ${o.customer?.address || ''})`,
     '',
-    ...o.items.map(l => `${l.qty} x ${l.name} = ${money(l.price * l.qty)}`),
+    ...o.items.map(l => `${l.qty} x ${lineName(l)} = ${money(l.price * l.qty)}`),
     o.orderType === 'delivery' ? `Delivery: ${o.deliveryFee ? money(o.deliveryFee) : 'Free'}` : '',
     `Total: ${money(o.total)}`,
     `Payment: ${o.payment?.method === 'online' ? `Paid online${shop.walletName ? ' (' + shop.walletName + ')' : ''}${o.payment.ref ? ', transaction ID ' + o.payment.ref : ''}` : (o.orderType === 'pickup' ? 'Pay at pickup' : 'Cash on delivery')}`,
@@ -978,7 +992,7 @@ function sendAlerts(o) {
     if (shop.ntfyTopic) {
       // short message without personal details (ntfy codes are not password protected)
       const where = o.orderType === 'delivery' ? `Delivery to ${o.customer?.area || 'area not set'}` : 'Pickup';
-      const body = `${o.items.map(l => `${l.qty} x ${l.name}`).join(', ')}\n${where}. Total ${money(o.total)}, ${o.payment?.method === 'online' ? 'paid online' : 'cash'}.`;
+      const body = `${o.items.map(l => `${l.qty} x ${lineName(l)}`).join(', ')}\n${where}. Total ${money(o.total)}, ${o.payment?.method === 'online' ? 'paid online' : 'cash'}.`;
       const q = `title=${encodeURIComponent(`New online order ${o.code}: ${money(o.total)}`)}&priority=high&tags=bell${shop.adminUrl ? '&click=' + encodeURIComponent(shop.adminUrl) : ''}`;
       fetch(`https://ntfy.sh/${encodeURIComponent(shop.ntfyTopic)}?${q}`, { method: 'POST', body, ...ka }).catch(() => {});
     }
@@ -999,7 +1013,7 @@ async function placeOrder() {
   const err = $('#err2'), btn = $('#place');
   if (!form.pay || (form.pay === 'cod' && !shop.cod) || (form.pay === 'online' && !shop.payOnline)) return err.textContent = 'Please choose how you want to pay.';
   if (form.pay === 'online' && !form.paid) return err.textContent = 'Please send the payment first, then tick the box.';
-  const lines = Object.entries(cart).map(([id, qty]) => { const it = items.find(i => i.id === id); return it && { id, name: it.name, price: it.price, qty }; }).filter(Boolean);
+  const lines = cartLines(items, cart).map(l => orderLine(l, l.n));
   if (!lines.length) return err.textContent = 'Your order is empty.';
   btn.disabled = true; btn.textContent = 'Sending…'; err.textContent = '';
   const id = db.ref('orders').push().key;
@@ -1042,7 +1056,7 @@ function doneHtml(o, tracking) {
     ${o.status === 'cancelled' ? `<p class="err">This order was cancelled. Please call us if you have questions.</p>` :
       `<div class="track">${st(1, 'Received')}${st(2, 'Preparing')}${st(3, third)}${st(4, o.orderType === 'pickup' ? 'Picked up' : 'Delivered')}</div>`}
     ${shop.phone ? `<a class="linkbtn" style="display:block;text-decoration:none" href="tel:${esc(shop.phone.replace(/[^0-9+]/g, ''))}">${ic('call', 16)} Call ${esc(shop.phone)}</a>` : ''}
-    <div class="summary">${o.items.map(l => `${l.qty} x ${esc(l.name)}`).join('<br>')}
+    <div class="summary">${o.items.map(l => `${l.qty} x ${esc(lineName(l))}`).join('<br>')}
       <div style="margin-top:8px;font-weight:700">Total ${money(o.total)}, ${o.payment?.method === 'online' ? (o.payment.verified ? 'payment received' : 'paid online, being checked') : (o.orderType === 'pickup' ? 'pay at pickup' : 'cash on delivery')}</div></div>
     ${tracking ? '' : `<button class="linkbtn" id="more">Order something else</button>`}
   </div>`;
@@ -1061,7 +1075,7 @@ async function loadHistory(h) {
     <div class="hist">
       <div class="top"><b>Order ${esc(o.code)}</b><span class="chip ${esc(o.status)}">${esc(statusLabel(o))}</span></div>
       <div class="when">${fmt(o.createdAt)}, ${o.orderType === 'pickup' ? 'pickup' : 'delivery'}</div>
-      <div class="its">${o.items.map(l => `${l.qty} x ${esc(l.name)}`).join('<br>')}</div>
+      <div class="its">${o.items.map(l => `${l.qty} x ${esc(lineName(l))}`).join('<br>')}</div>
       <div class="row2"><b>${money(o.total)}</b>
         <div class="acts">
           ${['new', 'processing', 'ready'].includes(o.status) ? `<button class="smallbtn" data-track="${esc(o.id)}">${ic('truck', 15)}Track</button>` : ''}
@@ -1079,7 +1093,8 @@ function orderAgain(o) {
   if (!isOpen()) return toast('Online ordering is paused right now.', 'alert');
   let added = 0, missing = 0;
   for (const l of o.items) {
-    if (items.find(i => i.id === l.id)) { cart[l.id] = Math.min(50, (cart[l.id] || 0) + l.qty); added++; } else missing++;
+    const k = cartKey(l.id, l.opt);
+    if (cartPick(items, k)) { cart[k] = Math.min(50, (cart[k] || 0) + l.qty); added++; } else missing++;
   }
   save(CART_KEY, cart); renderMenu(); renderCartBits();
   if (!added) return toast('Those dishes are not available right now.', 'alert');
@@ -1126,7 +1141,7 @@ init().catch(e => { $('#app').innerHTML = `<div class="empty"><h2>The menu could
   if (typeof window.CK_FIREBASE === 'undefined') miss.push('config.js');
   if (typeof firebase === 'undefined') miss.push('firebase-app-compat.js');
   if (typeof CONFIGURED === 'undefined') miss.push('common.js');
-  if (typeof CONFIGURED !== 'undefined' && window.CK_VERSION !== '20261030113511') miss.push('common.js (this one is from an older version, upload the new common.js)');
+  if (typeof CONFIGURED !== 'undefined' && window.CK_VERSION !== '20261031043856') miss.push('common.js (this one is from an older version, upload the new common.js)');
   miss = miss.filter(function (v, i, a) { return a.indexOf(v) === i; });
   if (!miss.length) return;
   var s = document.getElementById('splash');
