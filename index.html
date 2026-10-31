@@ -358,6 +358,8 @@
   .areas button .ic{color:var(--steam)}
   .areas button.on{border-color:var(--gold);background:#FFF1F1;color:var(--gold)}
   .areas button.on .ic{color:var(--gold)}
+  .areas .afee{font-weight:500;color:var(--steam);font-size:13px;margin-left:2px}
+  .areas button.on .afee{color:var(--gold)}
   .pay{display:flex;gap:12px;align-items:flex-start;border:1.5px solid var(--line);border-radius:16px;padding:14px;margin-bottom:10px;cursor:pointer;background:#fff;width:100%;text-align:left}
   .pay.on{border-color:var(--sky);background:#F8FAFE}
   .pay .ic{margin-top:2px;color:var(--sky)}
@@ -454,7 +456,12 @@ const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
 cart = load(CART_KEY, {});
 form = { orderType: 'delivery', pay: 'cod', area: '', ...load(INFO_KEY, {}) };
 
-const fee = () => form.orderType === 'delivery' ? (Number(shop.deliveryFee) || 0) : 0;
+// delivery charge per area (admin sets one charge for each area; older setups have one charge for all)
+const feeFor = a => shop.areaFees && typeof shop.areaFees === 'object' ? (a in shop.areaFees ? Number(shop.areaFees[a]) || 0 : null) : (Number(shop.deliveryFee) || 0);
+const fee = () => form.orderType === 'delivery' ? (feeFor(form.area) ?? 0) : 0;
+const feeList = () => areas().map(feeFor).filter(x => x !== null);
+const feeText = () => { const l = feeList(); if (!l.length) return 'Free'; const lo = Math.min(...l), hi = Math.max(...l); return lo === hi ? (lo ? money(lo) : 'Free') : (lo ? `${money(lo)} to ${money(hi)}` : `Free to ${money(hi)}`); };
+const feeKnown = () => form.orderType === 'delivery' && areas().includes(form.area);
 const count = () => Object.values(cart).reduce((a, b) => a + b, 0);
 const subtotal = () => cartLines(items, cart).reduce((s, l) => s + l.price * l.n, 0);
 const isOpen = () => shop.enabled === true;
@@ -504,7 +511,7 @@ async function init() {
 function render() {
   const facts = [
     shop.hours && `<li>${ic('clock', 17)}${esc(shop.hours)}</li>`,
-    shop.allowDelivery && `<li>${ic('truck', 17)}${Number(shop.deliveryFee) ? 'Delivery ' + money(shop.deliveryFee) : 'Free delivery'}</li>`,
+    shop.allowDelivery && `<li>${ic('truck', 17)}${feeText() === 'Free' ? 'Free delivery' : 'Delivery ' + feeText()}</li>`,
     shop.allowPickup && `<li>${ic('store', 17)}Pickup available</li>`,
     (shop.cod || shop.payOnline) && `<li>${ic('cash', 17)}${[shop.cod && (advPct() ? `Cash on delivery (${advPct()}% advance)` : 'Cash on delivery'), shop.payOnline && 'Pay online'].filter(Boolean).join(' or ')}</li>`,
   ].filter(Boolean).join('');
@@ -542,7 +549,7 @@ function render() {
       <div class="wrap">
         <div class="it">${ic('clock', 24)}<div><b>Open 24 hours</b><span>Day or night, every day of the week.</span></div></div>
         <div class="it">${ic('flame', 24)}<div><b>Cooked when you order</b><span>Nothing sits waiting. Your food starts when you tap Place order.</span></div></div>
-        <div class="it">${ic('truck', 24)}<div><b>Delivery or pickup</b><span>${shop.allowDelivery ? `We deliver to ${esc(areaText())}${Number(shop.deliveryFee) ? ` for ${money(shop.deliveryFee)}` : ', free'}.` : `Collect your order from ${esc(shop.address)}.`}</span></div></div>
+        <div class="it">${ic('truck', 24)}<div><b>Delivery or pickup</b><span>${shop.allowDelivery ? `We deliver to ${esc(areaText())}${feeText() === 'Free' ? ', free' : ` for ${feeText()}`}.` : `Collect your order from ${esc(shop.address)}.`}</span></div></div>
         <div class="it">${ic('cash', 24)}<div><b>Pay your way</b><span>${[shop.cod && 'Cash', shop.payOnline && (shop.walletName || 'online wallet')].filter(Boolean).join(' or ') || 'Cash'}, whatever is easiest.</span></div></div>
       </div>
     </section>
@@ -810,7 +817,7 @@ function renderSide() {
       </div>`).join('') : `<div class="emptyc">${ic('bag', 40)}<p>Your order is empty.<br>Tap + on any dish to add it.</p></div>`}</div>
     ${lines.length ? `<div class="sf">
       <div class="totals" style="margin:0 0 12px"><div class="grand" style="padding-top:0"><span>Food total</span><span>${money(subtotal())}</span></div>
-      ${shop.allowDelivery ? `<div style="font-size:14px"><span>Delivery</span><span>${Number(shop.deliveryFee) ? money(shop.deliveryFee) : 'Free'}</span></div>` : ''}</div>
+      ${shop.allowDelivery ? `<div style="font-size:14px"><span>Delivery${feeKnown() ? ' to ' + esc(form.area) : ''}</span><span>${feeKnown() ? (fee() ? money(fee()) : 'Free') : feeText()}</span></div>` : ''}</div>
       ${isOpen() ? `<button class="bigbtn" id="sideCheckout">Checkout</button>` : `<div class="err">Online ordering is paused right now.</div>`}
     </div>` : ''}`;
   fillPhotos(el);
@@ -872,7 +879,7 @@ function renderDrawer() {
             <div class="stepper"><button data-dec="${esc(key)}" aria-label="One less">${ic('minus', 15)}</button><span>${n}</span><button data-add="${esc(key)}" aria-label="One more">${ic('plus', 15)}</button></div>
           </div>`).join('')}
         ${totalsHtml(false)}
-        <p class="muted" style="font-size:14px;margin:4px 0 0">${shop.allowDelivery ? (fee() || form.orderType !== 'delivery' ? `Delivery fee ${Number(shop.deliveryFee) ? money(shop.deliveryFee) : 'is free'}; added at checkout.` : '') : ''}</p>
+        <p class="muted" style="font-size:14px;margin:4px 0 0">${shop.allowDelivery ? (feeText() === 'Free' ? 'Delivery is free.' : `Delivery charge ${feeText()} depending on your area; added at checkout.`) : ''}</p>
       </div>
       <div class="dfoot">${isOpen() ? `<button class="bigbtn" data-go="details">Continue to checkout</button>` : `<div class="err">Online ordering is paused right now.</div>`}</div>`
       : `<div class="dbody"><div class="empty">${ic('bag', 44)}<p>Your order is empty. Tap the plus button on any dish to add it.</p></div></div>`);
@@ -887,7 +894,7 @@ function renderDrawer() {
           : types.length ? `<p class="muted" style="margin-top:0">${types[0][0] === 'pickup' ? 'Pickup only: collect your order from the cafe.' : 'Delivery to your address.'}</p>` : ''}
         <div class="field"><label for="fname">Your name</label><input id="fname" name="name" autocomplete="name" maxlength="60" value="${esc(form.name || '')}" required></div>
         <div class="field"><label for="fphone">Phone number</label><input id="fphone" name="phone" type="tel" autocomplete="tel" maxlength="20" inputmode="tel" placeholder="98XXXXXXXX" value="${esc(form.phone || '')}" required></div>
-        ${form.orderType === 'delivery' ? `<div class="field"><label>Delivery area</label><div class="areas" role="radiogroup">${areas().map(a => `<button type="button" role="radio" aria-checked="${form.area === a}" class="${form.area === a ? 'on' : ''}" data-area="${esc(a)}">${ic('pin', 15)}${esc(a)}</button>`).join('')}</div><div class="small muted" style="margin-top:6px;font-size:13px">We deliver to these areas in Kawasoti.</div></div>` : ''}
+        ${form.orderType === 'delivery' ? `<div class="field"><label>Delivery area</label><div class="areas" role="radiogroup">${areas().map(a => `<button type="button" role="radio" aria-checked="${form.area === a}" class="${form.area === a ? 'on' : ''}" data-area="${esc(a)}">${ic('pin', 15)}${esc(a)}<span class="afee">${feeFor(a) ? money(feeFor(a)) : 'Free'}</span></button>`).join('')}</div><div class="small muted" style="margin-top:6px;font-size:13px">We deliver to these areas in Kawasoti.</div></div>` : ''}
         <div class="field"><label for="faddr">${form.orderType === 'delivery' ? 'House, street or landmark' : 'Your address'}</label><textarea id="faddr" name="address" rows="2" maxlength="300" autocomplete="street-address" placeholder="Area, street, house or landmark" required>${esc(form.address || '')}</textarea></div>
         ${form.orderType === 'pickup' && shop.address ? `<p class="muted">${ic('pin', 16)} Pick up from: ${esc(shop.address)}</p>` : ''}
         <div class="field"><label for="fnote">Note for the kitchen (optional)</label><input id="fnote" name="note" maxlength="300" placeholder="Less spicy, no onion, extra achar" value="${esc(form.note || '')}"></div>
@@ -1155,7 +1162,7 @@ init().catch(e => { $('#app').innerHTML = `<div class="empty"><h2>The menu could
   if (typeof window.CK_FIREBASE === 'undefined') miss.push('config.js');
   if (typeof firebase === 'undefined') miss.push('firebase-app-compat.js');
   if (typeof CONFIGURED === 'undefined') miss.push('common.js');
-  if (typeof CONFIGURED !== 'undefined' && window.CK_VERSION !== '20261031091652') miss.push('common.js (this one is from an older version, upload the new common.js)');
+  if (typeof CONFIGURED !== 'undefined' && window.CK_VERSION !== '20261031095544') miss.push('common.js (this one is from an older version, upload the new common.js)');
   miss = miss.filter(function (v, i, a) { return a.indexOf(v) === i; });
   if (!miss.length) return;
   var s = document.getElementById('splash');
